@@ -1,0 +1,8 @@
+<?xml version="1.0"?>
+<launch>
+<node pkg="rosbot_navigation" type="visualizer.py" name="graph_visualizer" output="screen">
+    <param name="use_sim_time" value="true"/>
+    <param name="start_delay" value="2.0"/>
+</node>
+
+</launch>

@@ -1,0 +1,12 @@
+<launch>
+  <!-- Declare arguments with default values -->
+  <arg name="goal_x" default="1.0"/>
+  <arg name="goal_y" default="-3.0"/>
+
+  <!-- Pass arguments as parameters -->
+  <node name="BFS_planner" pkg="rosbot_navigation" type="bfs_planner_grid.py" output="screen">
+    <param name="goal_x" value="$(arg goal_x)"/>
+    <param name="goal_y" value="$(arg goal_y)"/>
+  </node>
+</launch>
+
