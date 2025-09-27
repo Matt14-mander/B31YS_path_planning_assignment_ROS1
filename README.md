@@ -26,7 +26,7 @@ Clone this repository to your workspace:
 
 ```bash
 cd ~/catkin_ws/src
-git clone https://github.com/husarion/rosbot_ros.git -b noetic
+git clone https://github.com/IgnacioCarlucho/B31YS_path_planning_assignment_ROS1
 ```
 
 Install dependencies:
@@ -46,7 +46,7 @@ catkin_make
 From this moment you can use rosbot simulations. Please remember that each time, when you open new terminal window, you will need to load system variables:
 
 ```bash
-source ~/catkin_make/devel/setup.sh
+source ~/catkin_make/devel/setup.bash
 ```
 
 If not you should add them to your bashrc. 
