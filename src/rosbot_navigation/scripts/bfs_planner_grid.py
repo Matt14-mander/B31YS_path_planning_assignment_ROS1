@@ -201,7 +201,7 @@ class BFSPlanner:
         path.reverse()  # Reverse the path to get it from start to goal
         return path
 
-    def BFSPath(self, graph, start, goal):
+    def BFSPath_old(self, graph, start, goal):
         """
         Perform Breadth-First Search (BFS) to find the shortest path from start to goal.
         
@@ -232,7 +232,36 @@ class BFSPlanner:
                     queue.append(neighbor)  # Enqueue the neighbor
 
         return False, []  # No path found
+    def BFSPath(self, graph, start, goal):
+        """
+        Perform Breadth-First Search (BFS) to find the shortest path from start to goal.
+        
+        Uses three lists for clarity:
+        - queue: the processing queue (FIFO)
+        - open_nodes: all nodes that have been discovered (queued)
+        - visited: nodes that have been fully explored
+        """
+        queue = [start]         # Processing queue (FIFO)
+        open_nodes = [start]    # Discovered but not yet fully explored
+        visited = []            # Fully explored nodes
+        parent = {}             # To reconstruct the path
 
+        while queue:
+            current = queue.pop(0)
+            open_nodes.remove(current)  # We're now processing this node
+            visited.append(current)
+
+            if current == goal:
+                return True, self.backtrace(parent, start, goal)
+
+            for neighbor in graph.get(current, []):
+                if neighbor not in open_nodes and neighbor not in visited:
+                    queue.append(neighbor)
+                    open_nodes.append(neighbor)
+                    parent[neighbor] = current
+
+        return False, []  # Goal not found
+        
     def publish_path(self, path_cells):
         """
         Publish the planned path as a Path message for visualization in RViz.
