@@ -201,37 +201,7 @@ class BFSPlanner:
         path.reverse()  # Reverse the path to get it from start to goal
         return path
 
-    def BFSPath_old(self, graph, start, goal):
-        """
-        Perform Breadth-First Search (BFS) to find the shortest path from start to goal.
-        
-        :param graph: The adjacency list graph
-        :param start: The start cell
-        :param goal: The goal cell
-        :return: A tuple (found, path), where 'found' is True if the path is found,
-                 and 'path' is the list of cells representing the path
-        """
-        queue = []  # Queue for BFS (using list)
-        queue.append(start)  # Enqueue the start node
-        visited = []  # List of visited nodes
-        visited.append(start)  # Mark the start node as visited
-        parent = {}  # Dictionary to store parent of each node
-
-        while queue:
-            current = queue.pop(0)  # Dequeue the first node in the queue
-
-            # If the current node is the goal, return True and the reconstructed path
-            if current == goal:
-                return True, self.backtrace(parent, start, goal)
-
-            # Explore neighbors of the current node
-            for neighbor in graph.get(current, []):
-                if neighbor not in visited:  # If the neighbor is not visited
-                    visited.append(neighbor)  # Mark it as visited
-                    parent[neighbor] = current  # Record the parent of the neighbor
-                    queue.append(neighbor)  # Enqueue the neighbor
-
-        return False, []  # No path found
+ 
     def BFSPath(self, graph, start, goal):
         """
         Perform Breadth-First Search (BFS) to find the shortest path from start to goal.
