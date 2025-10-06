@@ -1,6 +1,6 @@
 <?xml version="1.0"?>
 <launch>
-  <arg name="student_name" default="default"/>
+  <arg name="student_name" default="ZhengYuanhao"/>
   
   <node name="test_node" pkg="rosbot_navigation" type="dijkstra_planner_grid.py" output="screen">
     <param name="student_name" value="$(arg student_name)"/>

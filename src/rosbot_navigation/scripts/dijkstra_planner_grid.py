@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-
 import rospy
 import hashlib
+import heapq
 from collections import deque
 from nav_msgs.msg import OccupancyGrid, Path
 from geometry_msgs.msg import PoseStamped
 import math
+
 
 class DijkstraPlanner:
     def __init__(self):
@@ -17,7 +18,7 @@ class DijkstraPlanner:
 
         # Subscriber to receive the map
         rospy.Subscriber('/map', OccupancyGrid, self.map_callback)
-        
+
         # Publisher to publish the planned path
         self.path_pub = rospy.Publisher('/planned_path', Path, queue_size=1, latch=True)
 
@@ -26,22 +27,23 @@ class DijkstraPlanner:
         while self.map_data is None and not rospy.is_shutdown():
             rospy.sleep(0.5)
         rospy.loginfo("Map received!")
-        
+
         # Inflate obstacles for safety
-        self.inflate_obstacles(inflation_radius=3)  # Adjust radius as needed 
+        self.inflate_obstacles(inflation_radius=3)  # 可按需要调整
 
         # Define world coordinates for start position in meters
-        start_world = (0.0, 0.0)  # Example start position
+        start_world = (0.0, 0.0)  # 示例起点
 
         # Get student's name from parameter
         student_name = rospy.get_param("~student_name", "default_student")
-        print(student_name)
+        rospy.loginfo("Student: %s", student_name)
+
         # Try to find a valid goal based on the student's name
         attempt = 0
         goal_grid = None
-        while not goal_grid and attempt < 100:  # Limit attempts to avoid infinite loop
+        while not goal_grid and attempt < 100:  # 限制尝试次数
             goal_grid = self.get_goal_from_name(student_name, attempt)
-            if not self.is_free(goal_grid) or not self.is_reachable(goal_grid):
+            if (not self.is_free(goal_grid)) or (not self.is_reachable(goal_grid)):
                 rospy.logwarn(f"Generated goal attempt {attempt} is invalid. Trying again...")
                 goal_grid = None
                 attempt += 1
@@ -58,7 +60,7 @@ class DijkstraPlanner:
 
         rospy.loginfo(f"Planning from {start} to {goal}...")
 
-        # Check that start is free
+        # Check that start/goal are free
         if not self.is_free(start):
             rospy.logwarn("Start is not in free space.")
             return
@@ -75,74 +77,52 @@ class DijkstraPlanner:
             self.publish_path(path)
         else:
             rospy.logwarn("No path found!")
-        
+
         # Keep the node running
         rospy.spin()
 
     def map_callback(self, msg):
-        """
-        Callback function to receive the map data from the /map topic.
-        """
+        """Callback function to receive the map data from the /map topic."""
         self.map_data = msg
 
     def get_goal_from_name(self, student_name, attempt=0):
         """
         Generate a goal position based on the student's name.
         Uses attempt number to avoid infinite loops with invalid goals.
-        
-        :param student_name: Name of the student
-        :param attempt: Attempt number to modify hash input
-        :return: Goal position in grid coordinates (gx, gy)
         """
-        # Modify input for different attempts to avoid infinite loops
         hash_input = f"{student_name}_{attempt}"
         hash_value = int(hashlib.md5(hash_input.encode()).hexdigest(), 16)
 
-        # Map the hash value to coordinates (ensure they are within the grid size)
         width = self.map_data.info.width
         height = self.map_data.info.height
 
-        # Generate a valid position on the grid
         goal_x = (hash_value % width)
         goal_y = (hash_value // width) % height
-
         return (goal_x, goal_y)
 
     def is_reachable(self, goal):
         """
-        Check if the goal is reachable from the start point using BFS
-        
-        :param goal: Goal position in grid coordinates
-        :return: True if goal is reachable, False otherwise
+        Check if the goal is reachable from the start point using BFS on free cells.
         """
         start = self.world_to_grid((0.0, 0.0), self.map_data.info)  # Convert start to grid
-        
-        # Use BFS to check if goal is reachable
+
         queue = deque([start])
         visited = set([start])
-        
+
         while queue:
             current = queue.popleft()
-            
             if current == goal:
-                return True  # Goal is reachable
-            
-            # Explore neighbors
-            for neighbor in self.get_neighbors(current):
-                if neighbor not in visited:
-                    visited.add(neighbor)
-                    queue.append(neighbor)
-        
-        return False  # Goal is not reachable
+                return True
+
+            for nbr, _w in self.get_neighbors(current, diagonal=True):  # 兼容权重返回
+                if nbr not in visited:
+                    visited.add(nbr)
+                    queue.append(nbr)
+
+        return False
 
     def world_to_grid(self, world, map_info):
-        """
-        Convert world coordinates to grid coordinates.
-        
-        :param world: World coordinates (x, y) in meters
-        :param map_info: The map's metadata (resolution, origin, etc.)
-        :return: Corresponding grid cell coordinates (gx, gy)
-        """
+        """Convert world (meters) to grid (cells)."""
         res = map_info.resolution
         origin = map_info.origin.position
         gx = int((world[0] - origin.x) / res)
@@ -150,78 +130,60 @@ class DijkstraPlanner:
         return (gx, gy)
 
     def grid_to_world(self, cell):
-        """
-        Convert grid cell coordinates to world coordinates.
-        
-        :param cell: Grid cell coordinates (gx, gy)
-        :return: Corresponding world coordinates (wx, wy) in meters
-        """
+        """Convert grid (cells) to world (meters)."""
         res = self.map_data.info.resolution
         origin = self.map_data.info.origin.position
         wx = cell[0] * res + origin.x + res / 2.0
         wy = cell[1] * res + origin.y + res / 2.0
         return (wx, wy)
-        
-        
+
     def inflate_obstacles(self, inflation_radius=2):
         """
         Inflate obstacles by a given radius to create safety margins.
-        
-        :param inflation_radius: Number of cells to inflate around obstacles
+        Marks inflated cells as 99 (occupied-like).
         """
         if not self.map_data:
             return
-        
+
         width = self.map_data.info.width
         height = self.map_data.info.height
-        
-        # Create a copy of the original map data
+
         inflated_data = list(self.map_data.data)
-        
-        # Find all occupied cells (value > 0)
+
+        # Occupied (>0) treated as obstacle; unknown (-1) remains unchanged here
         occupied_cells = []
         for y in range(height):
             for x in range(width):
                 idx = y * width + x
-                if self.map_data.data[idx] > 0:  # Occupied or unknown
+                if self.map_data.data[idx] > 0:
                     occupied_cells.append((x, y))
-        
-        # Inflate around each occupied cell
-        for occ_x, occ_y in occupied_cells:
+
+        for ox, oy in occupied_cells:
             for dy in range(-inflation_radius, inflation_radius + 1):
                 for dx in range(-inflation_radius, inflation_radius + 1):
-                    new_x = occ_x + dx
-                    new_y = occ_y + dy
-                    
-                    # Check if within bounds
-                    if 0 <= new_x < width and 0 <= new_y < height:
-                        # Check if within circular radius
-                        distance = (dx**2 + dy**2)**0.5
-                        if distance <= inflation_radius:
-                            idx = new_y * width + new_x
-                            # Only inflate if it was originally free space
-                            if self.map_data.data[idx] == 0:
-                                inflated_data[idx] = 99  # Mark as inflated obstacle
-        
-        # Update the map data
+                    nx = ox + dx
+                    ny = oy + dy
+                    if 0 <= nx < width and 0 <= ny < height:
+                        if dx * dx + dy * dy <= inflation_radius * inflation_radius:
+                            idx = ny * width + nx
+                            if inflated_data[idx] == 0:
+                                inflated_data[idx] = 99
+
         self.map_data.data = tuple(inflated_data)
 
     def is_free(self, cell):
         """
-        Check if a cell is free (not occupied).
-        
-        :param cell: Grid cell coordinates (gx, gy)
-        :return: True if the cell is free, False otherwise
+        Check if a cell is free (0). Treat unknown (-1) and inflated/occupied (>0) as not free.
         """
         width = self.map_data.info.width
         height = self.map_data.info.height
         x, y = cell
         if 0 <= x < width and 0 <= y < height:
-            value = self.map_data.data[y * width + x]
-            return value == 0  # 0 indicates free space
+            val = self.map_data.data[y * width + x]
+            return val == 0
         return False
 
-    def get_neighbors(self, cell):
+    def get_neighbors(self, cell, diagonal=False):
         """
         Get the valid neighbors of a given cell (up, down, left, right).
         
@@ -229,15 +191,22 @@ class DijkstraPlanner:
         :return: List of valid neighboring cells
         """
         x, y = cell
-        neighbors = [(x+1,y), (x-1,y), (x,y+1), (x,y-1)]
-        return [n for n in neighbors if self.is_free(n)]
+        neighbors = []
 
-    def build_graph(self):
+        candidates = [(x+1,y,1.0), (x-1,y,1.0), (x,y+1,1.0), (x,y-1,1.0)]
+        if diagonal:
+            rt2 = math.sqrt(2)
+            candidates += [(x+1,y+1,rt2), (x-1,y+1,rt2), (x+1,y-1,rt2), (x-1,y-1,rt2)]
+        for nx, ny, cost in candidates:
+            if self.is_free((nx, ny)):
+                neighbors.append(((nx, ny), cost))
+
+        return neighbors
+
+    def build_graph(self, diagonal=True):
         """
-        Build an adjacency list representation of the grid map.
-        Only includes free cells and their valid neighbors.
-        
-        :return: Graph (adjacency list), where keys are cells and values are lists of neighboring cells
+        Build an adjacency list of free cells.
+        Graph format: { node: [ (neighbor, weight), ... ] }
         """
         graph = {}
         width = self.map_data.info.width
@@ -245,41 +214,39 @@ class DijkstraPlanner:
 
         for y in range(height):
             for x in range(width):
-                if self.is_free((x, y)):  # Only include free cells
+                if self.is_free((x, y)):
                     node = (x, y)
-                    graph[node] = self.get_neighbors(node)  # Get neighbors for each free cell
-
+                    graph[node] = self.get_neighbors(node, diagonal=diagonal)
         return graph
 
     def backtrace(self, parent, start, goal):
-        """
-        Reconstruct the path from the start to the goal by backtracking from the goal.
-        
-        :param parent: Dictionary mapping each cell to its parent
-        :param start: The start cell
-        :param goal: The goal cell
-        :return: List of cells representing the path from start to goal
-        """
+        """Reconstruct path from start to goal using parent dict."""
         path = [goal]
         while path[-1] != start:
             path.append(parent[path[-1]])
-        path.reverse()  # Reverse the path to get it from start to goal
+        path.reverse()
         return path
 
     def dijkstra(self, graph, start, goal):
         """
-        Perform Dijkstra's algorithm to find the shortest path from start to goal.
-        
-        :param graph: The adjacency list graph
-        :param start: The start cell
-        :param goal: The goal cell
-        :return: A tuple (found, path), where 'found' is True if path is found,
-                 and 'path' is the list of cells representing the path
+        Dijkstra with a min-heap, supports weighted edges.
+        graph: {u: [ (v, w), ... ] } or {u: [v1, v2, ...]} (defaults weight=1)
         """
-        # Get ALL nodes (both keys and values)
+       # Get ALL nodes (both keys and values)
         all_nodes = set(graph.keys())
         for neighbors in graph.values():
-            all_nodes.update(neighbors)
+            for item in neighbors:
+                if isinstance(item, tuple):
+                    v = item[0]
+                else:
+                    v = item
+            all_nodes.add(v)
+
+        if start not in all_nodes or goal not in all_nodes:
+            return False, []
+
+        if start == goal:
+            return True, [start]
         
         # Initialize distances for ALL nodes
         distances = {}
@@ -288,51 +255,45 @@ class DijkstraPlanner:
         distances[start] = 0
         
         # Keep track of unvisited nodes
-        unvisited = list(all_nodes)  # Use all nodes, not just graph.keys()
+        # unvisited = list(all_nodes)  # Use all nodes, not just graph.keys()
         
         # Keep track of parents for path reconstruction
         parent = {}
-        
-        while unvisited:
-            # Find the unvisited node with minimum distance
-            # This replaces the heap functionality
-            current_node = None
-            for node in unvisited:
-                if current_node is None or distances[node] < distances[current_node]:
-                    current_node = node
-            
-            # Remove current node from unvisited
-            unvisited.remove(current_node)
-            
-            # If we reached the goal, we're done
-            if current_node == goal:
-                return True, self.backtrace(parent, start, current_node)
-            
-            # Check all neighbors of current node
-            for neighbor in graph.get(current_node, []):
-                if neighbor in unvisited:  # Only consider unvisited neighbors
-                    # Calculate new distance through current node
-                    new_distance = distances[current_node] + 1  # Each edge has weight 1
-                    
-                    # If this path is shorter, update it
-                    if new_distance < distances[neighbor]:
-                        distances[neighbor] = new_distance
-                        parent[neighbor] = current_node
-        
-        # No path found
+
+        heap = [(0.0, start)]
+        while heap:
+            d_u, u = heapq.heappop(heap)
+            if d_u > distances[u]:
+                continue
+
+            if u == goal:
+                path = self.backtrace(parent, start, goal)
+                return (len(path) > 0, path)
+
+            for item in graph.get(u, []):
+                if isinstance(item, (tuple, list)):
+                    v, w = item[0], float(item[1])
+                else:
+                    v, w = item, 1.0
+
+                if w < 0:
+                    # Dijkstra requires non-negative weights
+                    continue
+
+                alt = d_u + w
+                if alt < distances[v]:
+                    distances[v] = alt
+                    parent[v] = u
+                    heapq.heappush(heap, (alt, v))
+
         return False, []
 
     def publish_path(self, path_cells):
-        """
-        Publish the planned path as a Path message for visualization in RViz.
-        
-        :param path_cells: List of grid cells representing the planned path
-        """
+        """Publish the planned path as a Path message for RViz."""
         path = Path()
         path.header.frame_id = "map"
         path.header.stamp = rospy.Time.now()
 
-        # Convert each grid cell in the path to a PoseStamped message
         for cell in path_cells:
             pose = PoseStamped()
             pose.header.frame_id = "map"
@@ -343,7 +304,6 @@ class DijkstraPlanner:
             pose.pose.orientation.w = 1.0
             path.poses.append(pose)
 
-        # Publish the path to the /planned_path topic
         self.path_pub.publish(path)
 
 
